@@ -63,3 +63,53 @@ def build_charts(df, analysis, max_charts=6):
             charts.append((f"🥧 '{cat_col}' ulushi", fig))
 
     return charts[:max_charts]
+
+
+# ============================================================
+#  v2 — Yangi grafik turlari
+# ============================================================
+def chart_keyword_groups(groups, metric_name):
+    """Kalit so'z guruhlari bo'yicha gorizontal ustunli grafik (sohalar kabi)."""
+    if not groups:
+        return None
+    labels = [g["guruh"] for g in groups]
+    values = [g["yigindi"] for g in groups]
+    fig = px.bar(x=values, y=labels, orientation="h",
+                 color=labels, color_discrete_sequence=COLOR_SEQ)
+    fig.update_layout(showlegend=False, yaxis_title="", xaxis_title=metric_name)
+    fig.update_yaxes(categoryorder="total ascending")
+    return fig
+
+
+def chart_keyword_donut(groups):
+    """Guruhlar ulushi — doiraviy (donut) grafik."""
+    if not groups or len(groups) < 2:
+        return None
+    labels = [g["guruh"] for g in groups]
+    values = [g["qatorlar"] for g in groups]
+    fig = px.pie(names=labels, values=values, hole=0.45,
+                 color_discrete_sequence=COLOR_SEQ)
+    return fig
+
+
+def chart_numeric_bins(bins, col_name):
+    """Raqamli diapazon guruhlari bo'yicha ustunli grafik (quvvat guruhlari kabi)."""
+    if not bins:
+        return None
+    fig = px.bar(x=bins["labels"], y=bins["values"],
+                 color=bins["labels"], color_discrete_sequence=COLOR_SEQ)
+    fig.update_layout(showlegend=False, xaxis_title=col_name, yaxis_title="Soni")
+    return fig
+
+
+def chart_top(top_dict, metric_name):
+    """Eng yuqori qiymatli qatorlar reytingi."""
+    if not top_dict:
+        return None
+    labels = list(top_dict.keys())
+    values = list(top_dict.values())
+    fig = px.bar(x=values, y=labels, orientation="h",
+                 color_discrete_sequence=["#2E8B57"])
+    fig.update_layout(showlegend=False, yaxis_title="", xaxis_title=metric_name)
+    fig.update_yaxes(categoryorder="total ascending")
+    return fig

@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 
 # Sana o'qishdagi keraksiz ogohlantirishlarni o'chiramiz
-warnings.filterwarnings("ignore", category=UserWarning, module="pandas")
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 def detect_column_types(df):
@@ -118,3 +118,129 @@ def run_full_analysis(df):
         "categorical": categorical_stats(df, col_types),
         "correlations": find_correlations(df, col_types),
     }
+
+
+# ============================================================
+#  v2 — Kuchaytirilgan tahlil funksiyalari
+# ============================================================
+import re
+from collections import Counter
+
+# O'zbek/rus/ingliz keng tarqalgan "ahamiyatsiz" so'zlar (toifa uchun kerakmas)
+_STOPWORDS = {
+    "tuman", "tumani", "shahar", "shahri", "sonli", "viloyati", "viloyat",
+    "and", "the", "for", "ltd", "mchj", "ooo", "yj", "filiali",
+}
+
+# "Asosiy ko'rsatkich" bo'lishi mumkin bo'lgan ustun nomlari (ustuvor)
+_METRIC_HINTS = [
+    "summa", "jami", "total", "narx", "price", "daromad", "revenue", "sales",
+    "soni", "miqdor", "amount", "quvvat", "value", "qiymat", "balans",
+]
+
+
+def pick_main_metric(numeric_stats_dict, col_types):
+    """Eng muhim raqamli ustunni tanlaydi (nom bo'yicha yoki eng katta yig'indi)."""
+    numeric_cols = [c for c, t in col_types.items() if t == "numeric"]
+    if not numeric_cols:
+        return None
+    # 1) Nomi muhim ko'rsatkichga o'xshasa
+    for col in numeric_cols:
+        low = col.lower()
+        if any(h in low for h in _METRIC_HINTS):
+            return col
+    # 2) Aks holda eng katta yig'indiga ega ustun
+    return max(numeric_stats_dict, key=lambda c: abs(numeric_stats_dict[c]["sum"]),
+              default=numeric_cols[0])
+
+
+def extract_keywords(series, top_n=8):
+    """
+    Matnli ustundan eng ko'p uchraydigan kalit so'zlarni topadi.
+    Masalan obyekt nomlaridan: maktab, dispanser, OP, kolleji...
+    """
+    words = []
+    for val in series.dropna().astype(str):
+        tokens = re.findall(r"[\w\u02bb\u2019']+", val.lower())
+        for t in tokens:
+            t = t.strip("\u02bb\u2019'")
+            if len(t) > 2 and not t.isdigit() and t not in _STOPWORDS:
+                words.append(t)
+    return Counter(words).most_common(top_n)
+
+
+def keyword_groups(df, text_col, metric_col, top_n=8):
+    """
+    Matn ustunidagi kalit so'zlar bo'yicha qatorlarni guruhlab,
+    asosiy ko'rsatkichni yig'adi (artifactdagi "sohalar" kabi).
+    """
+    keywords = [w for w, _ in extract_keywords(df[text_col], top_n=top_n)]
+    rows = []
+    for kw in keywords:
+        mask = df[text_col].astype(str).str.lower().str.contains(re.escape(kw), na=False)
+        sub = df[mask]
+        if len(sub) == 0:
+            continue
+        rows.append({
+            "guruh": kw,
+            "qatorlar": int(len(sub)),
+            "yigindi": float(sub[metric_col].sum()) if metric_col else 0.0,
+        })
+    return sorted(rows, key=lambda r: r["yigindi"], reverse=True)
+
+
+def numeric_bins(df, col, n_bins=6):
+    """Raqamli ustunni diapazonlarga (guruhlarga) bo'ladi."""
+    s = df[col].dropna()
+    if len(s) < 5 or s.nunique() < 3:
+        return None
+    try:
+        binned = pd.cut(s, bins=min(n_bins, s.nunique()))
+        counts = binned.value_counts().sort_index()
+        labels = [f"{int(iv.left)}–{int(iv.right)}" if iv.right > 5
+                  else f"{iv.left:.2f}–{iv.right:.2f}" for iv in counts.index]
+        return {"labels": labels, "values": [int(v) for v in counts.values]}
+    except Exception:
+        return None
+
+
+def top_bottom(df, text_col, metric_col, n=5):
+    """Asosiy ko'rsatkich bo'yicha eng yuqori va eng past qatorlar."""
+    if not text_col or not metric_col:
+        return None
+    tmp = df[[text_col, metric_col]].dropna()
+    grouped = tmp.groupby(text_col)[metric_col].sum().sort_values(ascending=False)
+    return {
+        "top": grouped.head(n).to_dict(),
+        "bottom": grouped.tail(n).to_dict(),
+    }
+
+
+def find_issues(df, analysis):
+    """Shubhali / tekshirish kerak bo'lgan qatorlarni topadi (Xatoliklar tabi)."""
+    issues = []
+    ov = analysis["overview"]
+    if ov["missing"] > 0:
+        issues.append(f"{ov['missing']} ta bo'sh katak ({ov['missing_pct']}%) — to'ldirish kerak.")
+    if ov["duplicates"] > 0:
+        issues.append(f"{ov['duplicates']} ta to'liq takrorlangan qator bor.")
+    # Raqamli ustunlarda g'alati (chetdagi) qiymatlar
+    for col, t in analysis["col_types"].items():
+        if t == "numeric":
+            s = df[col].dropna()
+            if len(s) < 10:
+                continue
+            mean, std = s.mean(), s.std()
+            if std and std > 0:
+                outliers = s[(s < mean - 3 * std) | (s > mean + 3 * std)]
+                if len(outliers) > 0:
+                    issues.append(
+                        f"'{col}' ustunida {len(outliers)} ta g'ayrioddiy qiymat "
+                        f"(o'rtachadan juda uzoq) — tekshirib chiqing."
+                    )
+            negatives = s[s < 0]
+            if len(negatives) > 0:
+                issues.append(f"'{col}' ustunida {len(negatives)} ta manfiy qiymat bor.")
+    if not issues:
+        issues.append("✅ Jiddiy muammo topilmadi — ma'lumot toza ko'rinadi.")
+    return issues
