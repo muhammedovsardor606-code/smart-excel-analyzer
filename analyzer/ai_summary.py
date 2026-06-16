@@ -90,41 +90,73 @@ def rule_based_summary(df, analysis):
     return "\n".join(lines)
 
 
+def _build_prompt(analysis):
+    """AI'ga yuboriladigan so'rov matnini tayyorlaydi (faqat tahlil natijasi)."""
+    context = {
+        "overview": analysis["overview"],
+        "numeric": analysis["numeric"],
+        "categorical": {k: v["top_values"] for k, v in analysis["categorical"].items()},
+        "correlations": analysis["correlations"],
+    }
+    return (
+        "Quyida Excel jadvalining avtomatik tahlil natijasi (JSON) berilgan. "
+        "Kichik biznes egasi tushunadigan oddiy o'zbek tilida, qisqa va aniq "
+        "xulosa yoz. Asosiy ko'rsatkichlarni ayt, e'tibor berish kerak bo'lgan "
+        "joylarni ko'rsat va 2-3 ta amaliy tavsiya ber. Markdown ishlat.\n\n"
+        f"Tahlil: {context}"
+    )
+
+
+def _key(name):
+    """Kalitni avval Streamlit Secrets'dan, keyin muhitdan qidiradi."""
+    try:
+        import streamlit as st
+        if name in st.secrets:
+            return st.secrets[name]
+    except Exception:
+        pass
+    return os.environ.get(name)
+
+
 def ai_summary(df, analysis):
     """
-    Agar ANTHROPIC_API_KEY mavjud bo'lsa, Claude yordamida xulosa yozadi.
-    Aks holda bepul rule-based xulosaga qaytadi.
+    Bepul AI xulosa (afzal: Groq). Tartib:
+      1) GROQ_API_KEY bo'lsa  -> Groq (bepul, Llama 3.3)
+      2) ANTHROPIC_API_KEY    -> Claude (pullik, ixtiyoriy)
+      3) Hech biri bo'lmasa   -> bepul rule-based xulosa
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        return rule_based_summary(df, analysis), "rule"
+    prompt = _build_prompt(analysis)
 
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
+    # --- 1) Groq (BEPUL) ---
+    groq_key = _key("GROQ_API_KEY")
+    if groq_key:
+        try:
+            from groq import Groq
+            client = Groq(api_key=groq_key)
+            resp = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                max_tokens=1000,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return resp.choices[0].message.content, "ai"
+        except Exception:
+            pass  # xato bo'lsa pastdagilarga o'tadi
 
-        # AI'ga faqat tahlil natijasini (raqamlarni) yuboramiz, butun faylni emas
-        context = {
-            "overview": analysis["overview"],
-            "numeric": analysis["numeric"],
-            "categorical": {k: v["top_values"] for k, v in analysis["categorical"].items()},
-            "correlations": analysis["correlations"],
-        }
-        prompt = (
-            "Quyida Excel jadvalining avtomatik tahlil natijasi (JSON) berilgan. "
-            "Kichik biznes egasi tushunadigan oddiy o'zbek tilida, qisqa va aniq "
-            "xulosa yoz. Asosiy ko'rsatkichlarni ayt, e'tibor berish kerak bo'lgan "
-            "joylarni ko'rsat va 2-3 ta amaliy tavsiya ber. Markdown ishlat.\n\n"
-            f"Tahlil: {context}"
-        )
-        resp = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1000,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = "".join(block.text for block in resp.content if block.type == "text")
-        return text, "ai"
-    except Exception as e:
-        # Xato bo'lsa ham foydalanuvchi xulosasiz qolmasin
-        fallback = rule_based_summary(df, analysis)
-        return fallback + f"\n\n_(AI rejimi ishlamadi, bepul tahlil ko'rsatildi.)_", "rule"
+    # --- 2) Anthropic (ixtiyoriy, pullik) ---
+    anthropic_key = _key("ANTHROPIC_API_KEY")
+    if anthropic_key:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=anthropic_key)
+            resp = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=1000,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = "".join(b.text for b in resp.content if b.type == "text")
+            return text, "ai"
+        except Exception:
+            pass
+
+    # --- 3) Bepul rule-based ---
+    return rule_based_summary(df, analysis), "rule"

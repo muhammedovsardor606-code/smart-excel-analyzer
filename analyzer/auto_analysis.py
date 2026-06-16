@@ -181,10 +181,12 @@ def keyword_groups(df, text_col, metric_col, top_n=8):
         sub = df[mask]
         if len(sub) == 0:
             continue
+        # Raqam bo'lsa uni yig'amiz, bo'lmasa qatorlar sonini ishlatamiz
+        value = float(sub[metric_col].sum()) if metric_col else float(len(sub))
         rows.append({
             "guruh": kw,
             "qatorlar": int(len(sub)),
-            "yigindi": float(sub[metric_col].sum()) if metric_col else 0.0,
+            "yigindi": value,
         })
     return sorted(rows, key=lambda r: r["yigindi"], reverse=True)
 
@@ -244,3 +246,25 @@ def find_issues(df, analysis):
     if not issues:
         issues.append("✅ Jiddiy muammo topilmadi — ma'lumot toza ko'rinadi.")
     return issues
+
+
+def category_distributions(df, col_types, max_unique=15):
+    """
+    Past xil-qiymatli matn ustunlarini (Kategoriya, Status, Viloyat...) topib,
+    har birida qaysi qiymat nechta marta uchrashini sanaydi.
+    Raqam bo'lmasa ham dashboard chiqishini ta'minlaydi.
+    """
+    dists = []
+    for col, t in col_types.items():
+        if t in ("categorical", "datetime") or (t == "numeric" and df[col].nunique() <= max_unique):
+            n = df[col].nunique()
+            if 2 <= n <= max_unique:
+                counts = df[col].astype(str).value_counts().head(max_unique)
+                dists.append({
+                    "col": col,
+                    "labels": [str(x) for x in counts.index],
+                    "values": [int(v) for v in counts.values],
+                    "unique": int(n),
+                })
+    # Eng "ma'noli" (kam guruhli) ustunlarni oldinga qo'yamiz
+    return sorted(dists, key=lambda d: d["unique"])

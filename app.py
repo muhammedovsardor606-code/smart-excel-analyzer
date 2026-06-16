@@ -8,11 +8,12 @@ import streamlit as st
 from analyzer.data_loader import get_sheet_names, load_excel
 from analyzer.auto_analysis import (
     run_full_analysis, pick_main_metric, keyword_groups,
-    numeric_bins, top_bottom, find_issues,
+    numeric_bins, top_bottom, find_issues, category_distributions,
 )
 from analyzer.charts import (
     build_charts, chart_keyword_groups, chart_keyword_donut,
     chart_numeric_bins, chart_top,
+    chart_category_count_bar, chart_category_count_donut,
 )
 from analyzer.ai_summary import ai_summary
 
@@ -105,18 +106,35 @@ with tab1:
 with tab2:
     rendered = False
 
-    # 1) Kalit so'z guruhlari (matn nomlaridan sohalar) + donut
-    if main_text and main_metric and df[main_text].nunique() > 12:
+    # 0) Toifa taqsimotlari (raqam bo'lmasa ham ishlaydi) — Kategoriya, Status, Viloyat...
+    dists = category_distributions(df, col_types)
+    if dists:
+        rendered = True
+        st.markdown("**📊 Toifalar bo'yicha taqsimot (qaysi guruhda nechta)**")
+        for d in dists[:4]:
+            c1, c2 = st.columns([3, 2])
+            with c1:
+                st.markdown(f"**'{d['col']}' bo'yicha soni**")
+                st.plotly_chart(chart_category_count_bar(d), use_container_width=True)
+            with c2:
+                if d["unique"] <= 8:
+                    st.markdown("**Ulushi**")
+                    st.plotly_chart(chart_category_count_donut(d), use_container_width=True)
+        st.divider()
+
+    # 1) Kalit so'z guruhlari (matn nomlaridan sohalar)
+    if main_text and df[main_text].nunique() > 12:
         groups = keyword_groups(df, main_text, main_metric, top_n=8)
+        metric_label = main_metric if main_metric else "qatorlar soni"
         if groups:
             rendered = True
             c1, c2 = st.columns([3, 2])
             with c1:
-                st.markdown(f"**🔑 '{main_text}' bo'yicha asosiy guruhlar ('{main_metric}' yig'indisi)**")
-                fig = chart_keyword_groups(groups, main_metric)
+                st.markdown(f"**🔑 '{main_text}' ichidagi tez-tez uchraydigan so'zlar ('{metric_label}')**")
+                fig = chart_keyword_groups(groups, metric_label)
                 if fig: st.plotly_chart(fig, use_container_width=True)
             with c2:
-                st.markdown("**🥧 Guruhlar ulushi**")
+                st.markdown("**🥧 Ulushi**")
                 fig = chart_keyword_donut(groups)
                 if fig: st.plotly_chart(fig, use_container_width=True)
 
@@ -179,7 +197,7 @@ st.subheader("🤖 Xulosa va tavsiyalar")
 with st.spinner("Xulosa tayyorlanmoqda..."):
     summary_text, mode = ai_summary(df, analysis)
 if mode == "ai":
-    st.success("🤖 AI tahlili (Claude)")
+    st.success("🤖 AI tahlili (Groq · bepul)")
 else:
     st.info("💡 Avtomatik tahlil (bepul rejim)")
 st.markdown(summary_text)

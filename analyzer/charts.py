@@ -113,3 +113,18 @@ def chart_top(top_dict, metric_name):
     fig.update_layout(showlegend=False, yaxis_title="", xaxis_title=metric_name)
     fig.update_yaxes(categoryorder="total ascending")
     return fig
+
+
+def chart_category_count_bar(dist):
+    """Toifa ustunidagi har bir qiymat nechta marta uchraganini ustunli grafik qiladi."""
+    fig = px.bar(x=dist["labels"], y=dist["values"],
+                 color=dist["labels"], color_discrete_sequence=COLOR_SEQ)
+    fig.update_layout(showlegend=False, xaxis_title=dist["col"], yaxis_title="Soni")
+    return fig
+
+
+def chart_category_count_donut(dist):
+    """Toifa ulushini donut grafik qiladi."""
+    fig = px.pie(names=dist["labels"], values=dist["values"], hole=0.45,
+                 color_discrete_sequence=COLOR_SEQ)
+    return fig
